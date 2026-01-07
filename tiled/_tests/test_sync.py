@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import tempfile
+import uuid
 
 import awkward
 import h5py
@@ -24,7 +25,9 @@ from tiled.server.app import build_app
 def client_factory(readable_storage=None):
     with tempfile.TemporaryDirectory() as tempdir:
         catalog = in_memory(
-            writable_storage=str(tempdir), readable_storage=readable_storage
+            named_memory=str(uuid.uuid4())[:8],
+            writable_storage=str(tempdir),
+            readable_storage=readable_storage,
         )
         app = build_app(catalog)
         with Context.from_app(app) as context:
@@ -61,7 +64,7 @@ def populate_internal(client):
     client.write_array([1, 2, 3], key="a", metadata={"color": "red"}, specs=["alpha"])
     # table
     df = pandas.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
-    client.write_dataframe(df, key="b", metadata={"color": "green"}, specs=["beta"])
+    client.write_table(df, key="b", metadata={"color": "green"}, specs=["beta"])
     # awkward
     client.write_awkward(
         awkward.Array([1, [2, 3]]), key="d", metadata={"color": "red"}, specs=["alpha"]
@@ -77,7 +80,7 @@ def populate_internal(client):
     container.write_array(
         [1, 2, 3], key="A", metadata={"color": "red"}, specs=["alpha"]
     )
-    container.write_dataframe(df, key="B", metadata={"color": "green"}, specs=["beta"])
+    container.write_table(df, key="B", metadata={"color": "green"}, specs=["beta"])
     container.write_awkward(
         awkward.Array([1, [2, 3]]), key="D", metadata={"color": "red"}, specs=["alpha"]
     )

@@ -41,12 +41,20 @@ is useful when:
 
 To follow along, you may start a Tiled server with a simple authentication provider,
 as shown. Alternatively, you may use an existing authenticated Tiled server, such as
-`https://tiled-demo.blueskyproject.io`; if you do, replace `http://localhost:8000`
+`https://tiled-demo.nsls2.bnl.gov`; if you do, replace `http://localhost:8000`
 in the example below with that address.
 
 ```
 # You can find example_configs/ in the root of the tiled source code repository.
 ALICE_PASSWORD=secret1 tiled serve config example_configs/toy_authentication.yml
+```
+
+Note that you will need to run these helper tools to prep the backing databases that Tiled needs,
+before you can use the example config shown above:
+```
+# prep the access tags and catalog databases
+python example_configs/access_tags/compile_tags.py
+python example_configs/catalog/create_catalog.py
 ```
 
 Using the Tiled commandline interface, log in as `alice` using the password `secret1`.
@@ -72,7 +80,7 @@ This text is the API key. **It should be handled as a secret.**
 We can use it in the Python client:
 
 ```py
->>> from tiled.client import from_url
+>>> from tiled.client import from_uri
 >>> API_KEY = "YOUR_KEY_HERE"
 >>> c = from_uri("http://localhost:8000", api_key=API_KEY)
 ```
@@ -88,7 +96,7 @@ and then start Python (or IPython, or Jupyter, or...). The Python client will
 use that, unless it is explicitly passed different credentials.
 
 ```py
->>> from tiled.client import from_url
+>>> from tiled.client import from_uri
 >>> c = from_uri("http://localhost:8000")  # uses TILED_API_KEY, if set
 ```
 

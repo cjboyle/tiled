@@ -3,7 +3,7 @@ Generate the 'links' section of the response JSON.
 
 The links vary by structure family.
 """
-from ..structures.core import StructureFamily
+from .structures.core import StructureFamily
 
 
 def links_for_node(structure_family, structure, base_url, path_str):
@@ -48,7 +48,6 @@ LINKS_BY_STRUCTURE_FAMILY = {
     StructureFamily.array: links_for_array,
     StructureFamily.awkward: links_for_awkward,
     StructureFamily.container: links_for_container,
-    StructureFamily.composite: links_for_container,
     StructureFamily.sparse: links_for_array,  # spare and array are the same
     StructureFamily.table: links_for_table,
 }

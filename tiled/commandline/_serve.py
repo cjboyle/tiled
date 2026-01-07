@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import typer
 
@@ -138,9 +138,9 @@ def serve_directory(
     stamp_head(ALEMBIC_INI_TEMPLATE_PATH, ALEMBIC_DIR, database)
 
     from ..catalog import from_uri as catalog_from_uri
+    from ..config import Authentication
     from ..server.app import build_app, print_server_info
 
-    server_settings = {}
     if keep_ext:
         from ..adapters.files import identity
 
@@ -201,11 +201,10 @@ def serve_directory(
 
     web_app = build_app(
         catalog_adapter,
-        {
-            "allow_anonymous_access": public,
-            "single_user_api_key": api_key,
-        },
-        server_settings,
+        Authentication(
+            allow_anonymous_access=public,
+            single_user_api_key=api_key,
+        ),
     )
     import functools
 
@@ -331,6 +330,19 @@ def serve_catalog(
             "By default, a random key is generated at startup and printed."
         ),
     ),
+    cache_uri: Optional[str] = typer.Option(
+        None, "--cache", help=("Provide cache URI")
+    ),
+    cache_data_ttl: Optional[int] = typer.Option(
+        None,
+        "--cache-data-ttl",
+        help=("Max retention time for streaming data (seconds)"),
+    ),
+    cache_seq_ttl: Optional[int] = typer.Option(
+        None,
+        "--cache-seq-ttl",
+        help=("Max retention time for streaming sequence counter (seconds)"),
+    ),
     host: str = typer.Option(
         "127.0.0.1",
         help=(
@@ -364,6 +376,7 @@ def serve_catalog(
     import urllib.parse
 
     from ..catalog import from_uri
+    from ..config import Authentication
     from ..server.app import build_app, print_server_info
 
     parsed_database = urllib.parse.urlparse(database)
@@ -401,6 +414,7 @@ def serve_catalog(
         from ..alembic_utils import stamp_head
         from ..catalog.alembic_constants import ALEMBIC_DIR, ALEMBIC_INI_TEMPLATE_PATH
         from ..catalog.core import initialize_database
+        from ..config import StreamingCache
         from ..utils import ensure_specified_sql_driver
 
         database = ensure_specified_sql_driver(database)
@@ -462,20 +476,31 @@ or use an existing one:
             err=True,
         )
 
-    server_settings = {}
+    if cache_uri:
+        cli_cache_settings = {}
+        cli_cache_settings["uri"] = cache_uri
+        if cache_data_ttl:
+            cli_cache_settings["data_ttl"] = cache_data_ttl
+        if cache_seq_ttl:
+            cli_cache_settings["seq_ttl"] = cache_seq_ttl
+        # Apply defaults.
+        cache_settings = StreamingCache(**cli_cache_settings).model_dump()
+    else:
+        cache_settings = None
+
     tree = from_uri(
         database,
         writable_storage=write,
         readable_storage=read,
         init_if_not_exists=init,
+        cache_settings=cache_settings,
     )
     web_app = build_app(
         tree,
-        {
-            "allow_anonymous_access": public,
-            "single_user_api_key": api_key,
-        },
-        server_settings,
+        Authentication(
+            allow_anonymous_access=public,
+            single_user_api_key=api_key,
+        ),
         scalable=scalable,
     )
     print_server_info(web_app, host=host, port=port, include_api_key=api_key is None)
@@ -535,18 +560,17 @@ def serve_pyobject(
     ),
 ):
     "Serve a Tree instance from a Python module."
+    from ..config import Authentication
     from ..server.app import build_app, print_server_info
     from ..utils import import_object
 
     tree = import_object(object_path)
-    server_settings = {}
     web_app = build_app(
         tree,
-        {
-            "allow_anonymous_access": public,
-            "single_user_api_key": api_key,
-        },
-        server_settings,
+        Authentication(
+            allow_anonymous_access=public,
+            single_user_api_key=api_key,
+        ),
         scalable=scalable,
     )
     print_server_info(web_app, host=host, port=port, include_api_key=api_key is None)
@@ -570,12 +594,13 @@ def serve_demo(
     port: int = typer.Option(8000, help="Bind to a socket with this port."),
 ):
     "Start a public server with example data."
+    from ..config import Authentication
     from ..server.app import build_app, print_server_info
     from ..utils import import_object
 
     EXAMPLE = "tiled.examples.generated:tree"
     tree = import_object(EXAMPLE)
-    web_app = build_app(tree, {"allow_anonymous_access": True}, {})
+    web_app = build_app(tree, Authentication(allow_anonymous_access=True), {})
     print_server_info(web_app, host=host, port=port, include_api_key=True)
 
     import uvicorn
@@ -640,7 +665,7 @@ def serve_config(
 
     from ..config import parse_configs
 
-    config_path = config_path or os.getenv("TILED_CONFIG", "config.yml")
+    config_path = config_path or Path(os.getenv("TILED_CONFIG", "config.yml"))
     try:
         parsed_config = parse_configs(config_path)
     except Exception as err:
@@ -649,21 +674,17 @@ def serve_config(
 
     # Let --public flag override config.
     if public:
-        if "authentication" not in parsed_config:
-            parsed_config["authentication"] = {}
-        parsed_config["authentication"]["allow_anonymous_access"] = True
+        parsed_config.authentication.allow_anonymous_access = True
     # Let --api-key flag override config.
     if api_key:
-        if "authentication" not in parsed_config:
-            parsed_config["authentication"] = {}
-        parsed_config["authentication"]["single_user_api_key"] = api_key
+        parsed_config.authentication.single_user_api_key = api_key
 
     # Delay this import so that we can fail faster if config-parsing fails above.
 
     from ..server.app import build_app_from_config, logger, print_server_info
 
     # Extract config for uvicorn.
-    uvicorn_kwargs = parsed_config.pop("uvicorn", {})
+    uvicorn_kwargs = parsed_config.uvicorn
     # If --host is given, it overrides host in config. Same for --port and --log-config.
     uvicorn_kwargs["host"] = host or uvicorn_kwargs.get("host", "127.0.0.1")
     if port is None:
@@ -677,12 +698,7 @@ def serve_config(
     # This config was already validated when it was parsed. Do not re-validate.
     logger.info(f"Using configuration from {Path(config_path).absolute()}")
 
-    if root_path := uvicorn_kwargs.get("root_path", ""):
-        parsed_config["root_path"] = root_path
-
-    web_app = build_app_from_config(
-        parsed_config, source_filepath=config_path, scalable=scalable
-    )
+    web_app = build_app_from_config(parsed_config, scalable=scalable)
     print_server_info(
         web_app,
         host=uvicorn_kwargs["host"],
@@ -697,7 +713,7 @@ def serve_config(
     uvicorn.run(web_app, **uvicorn_kwargs)
 
 
-def _setup_log_config(log_config, log_timestamps):
+def _setup_log_config(log_config, log_timestamps) -> dict[str, Any]:
     if log_config is None:
         from ..server.logging_config import LOGGING_CONFIG
 

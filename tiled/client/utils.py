@@ -2,8 +2,10 @@ import builtins
 import os
 import uuid
 from collections.abc import Hashable
+from dataclasses import asdict
 from pathlib import Path
 from threading import Lock
+from typing import Optional, Union
 from urllib.parse import parse_qs, urlparse
 from weakref import WeakValueDictionary
 
@@ -11,6 +13,7 @@ import httpx
 import msgpack
 import stamina.instrumentation
 
+from ..structures.core import Spec
 from ..utils import path_from_uri
 
 MSGPACK_MIME_TYPE = "application/x-msgpack"
@@ -112,6 +115,8 @@ def should_retry(exception: Exception) -> bool:
 TILED_RETRY_ATTEMPTS = int(os.getenv("TILED_RETRY_ATTEMPTS", "10"))
 TILED_RETRY_TIMEOUT = float(os.getenv("TILED_RETRY_TIMEOUT", "45.0"))
 
+TILED_DEVICE_FLOW_ATTEMPTS = int(os.getenv("TILED_DEVICE_FLOW_ATTEMPTS", "100"))
+
 
 def retry_context():
     "Iterable that yields a context manager per retry attempt"
@@ -119,6 +124,22 @@ def retry_context():
         on=should_retry,
         attempts=TILED_RETRY_ATTEMPTS,
         timeout=TILED_RETRY_TIMEOUT,
+    )
+
+
+def should_poll_for_tokens(exception: Exception) -> bool:
+    # If the error is an HTTP status error, only retry on 400.
+    if isinstance(exception, httpx.HTTPStatusError):
+        return exception.response.status_code == httpx.codes.BAD_REQUEST
+    else:
+        return False
+
+
+def polling_retry_context(timeout: float):
+    return stamina.retry_context(
+        on=should_poll_for_tokens,
+        attempts=TILED_DEVICE_FLOW_ATTEMPTS,
+        timeout=timeout,
     )
 
 
@@ -395,3 +416,42 @@ def get_asset_filepaths(node):
             # because it cannot provide a filepath.
             filepaths.append(path_from_uri(asset.data_uri))
     return filepaths
+
+
+def chunks_repr(chunks: tuple[tuple[int, ...], ...]) -> str:
+    """A human-friendly representation of the chunks spec
+
+    Avoids printing long line of repeated values when representing chunks
+    for large arrays.
+    """
+    result = "("
+    for dim in chunks:
+        if len(dim) <= 5:
+            # Short dimensions, e.g. (1, 1, 1)
+            result += str(tuple(dim)) + ", "
+        elif len(set(dim)) == 1:
+            # All chunk sizes are the same, e.g. (1, 1, ..., 1)
+            result += f"({dim[0]}, {dim[0]}, ..., {dim[0]}), "
+        elif len(set(dim[:-1])) == 1:
+            # All chunk sizes but the last are the same, e.g. (1, 1, ..., 1, 3)
+            result += f"({dim[0]}, {dim[0]}, ..., {dim[0]}, {dim[-1]}), "
+        else:
+            # Mixed chunk sizes, e.g. (1, 2, 3, 4, 5)
+            result += "variable, "
+    result = result.rstrip(", ") + ")"
+    return result
+
+
+def normalize_specs(
+    specs: Optional[Union[list[str], list[Spec], str]]
+) -> Optional[list[dict[str, str]]]:
+    "Represent a list of Spec objects or strings as a list of dicts"
+
+    if specs is None:
+        return None
+    normalized_specs = []
+    for spec in specs:
+        if isinstance(spec, str):
+            spec = Spec(spec)
+        normalized_specs.append(asdict(spec))
+    return normalized_specs

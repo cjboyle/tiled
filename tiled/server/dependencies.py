@@ -1,37 +1,34 @@
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import pydantic_settings
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Query, Request
 from starlette.status import HTTP_403_FORBIDDEN, HTTP_404_NOT_FOUND, HTTP_410_GONE
 
-from tiled.adapters.protocols import AnyAdapter
-from tiled.server.schemas import Principal
-from tiled.structures.core import StructureFamily
-from tiled.utils import SpecialUsers
-
-from ..type_aliases import Scopes
+from ..access_control.protocols import AccessPolicy
+from ..adapters.protocols import AnyAdapter
+from ..structures.core import StructureFamily
+from ..type_aliases import AccessTags, Scopes
 from ..utils import BrokenLink
 from .core import NoEntry
+from .schemas import Principal
 from .utils import filter_for_access, record_timing
 
 
-def get_root_tree():
-    raise NotImplementedError(
-        "This should be overridden via dependency_overrides. "
-        "See tiled.server.app.build_app()."
-    )
+def get_root_tree(request: Request):
+    return request.app.state.root_tree
 
 
 async def get_entry(
     path: str,
     security_scopes: List[str],
-    principal: Union[Principal, SpecialUsers],
+    principal: Optional[Principal],
+    authn_access_tags: Optional[AccessTags],
     authn_scopes: Scopes,
     root_tree: pydantic_settings.BaseSettings,
     session_state: dict,
     metrics: dict,
     structure_families: Optional[set[StructureFamily]] = None,
-    access_policy=None,
+    access_policy: Optional[AccessPolicy] = None,
 ) -> AnyAdapter:
     """
     Obtain a node in the tree from its path.
@@ -43,7 +40,6 @@ async def get_entry(
     """
     path_parts = [segment for segment in path.split("/") if segment]
     entry = root_tree
-    # access_policy = getattr(request.app.state, "access_policy", None)
     # If the entry/adapter can take a session state, pass it in.
     # The entry/adapter may return itself or a different object.
     if hasattr(entry, "with_session_state") and session_state:
@@ -54,10 +50,10 @@ async def get_entry(
         entry,
         access_policy,
         principal,
+        authn_access_tags,
         authn_scopes,
         ["read:metadata"],
         metrics,
-        # request.state.metrics,
     )
     try:
         for i, segment in enumerate(path_parts):
@@ -80,6 +76,7 @@ async def get_entry(
                 entry,
                 access_policy,
                 principal,
+                authn_access_tags,
                 authn_scopes,
                 ["read:metadata"],
                 metrics,
@@ -91,6 +88,7 @@ async def get_entry(
                 allowed_scopes = await access_policy.allowed_scopes(
                     entry,
                     principal,
+                    authn_access_tags,
                     authn_scopes,
                 )
                 if not set(security_scopes).issubset(allowed_scopes):
@@ -162,3 +160,25 @@ def offset_param(
 ):
     "Specify and parse an offset parameter."
     return tuple(map(int, offset.split(",")))
+
+
+def patch_shape_param(
+    patch_shape: Optional[str] = Query(
+        None, min_length=1, pattern="^[0-9]+(,[0-9]+)*$|^scalar$"
+    ),
+):
+    "Specify and parse an array patch shape parameter."
+    if patch_shape is None:
+        return None
+    return tuple(map(int, patch_shape.split(",")))
+
+
+def patch_offset_param(
+    patch_offset: Optional[str] = Query(
+        None, min_length=1, pattern="^[0-9]+(,[0-9]+)*$"
+    ),
+):
+    "Specify and parse an array patch offset parameter."
+    if patch_offset is None:
+        return None
+    return tuple(map(int, patch_offset.split(",")))
