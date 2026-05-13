@@ -56,12 +56,15 @@ class TiledAuth(httpx.Auth):
 
     def sync_get_token(self, key, reload_from_disk=False):
         if not reload_from_disk:
-            # Use in-memory cached copy.
+            # Try in-memory cached copy first.
             try:
                 return self.tokens[key]
-            except Exception:
-                if self.token_directory is None:
-                    return None
+            except KeyError:
+                # Continue on to try to read token form disk.
+                pass
+        if self.token_directory is None:
+            # No token directory was configured. Give up.
+            return None
         with self._sync_lock:
             filepath = self.token_directory / key
             try:
@@ -75,7 +78,7 @@ class TiledAuth(httpx.Auth):
     def sync_set_token(self, key, value):
         with self._sync_lock:
             if not isinstance(value, str):
-                raise ValueError("Expected string value, got {value!r}")
+                raise ValueError(f"Expected string value, got {value!r}")
             if self.token_directory is not None:
                 filepath = self.token_directory / key
                 filepath.touch(mode=0o600)  # Set permissions.
