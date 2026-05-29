@@ -337,7 +337,7 @@ class SQLAdapter(Adapter[TableStructure]):
             f"WHERE _dataset_id={self.dataset_id} "
         )
         if partition is None:
-            query += "ORDER BY seq_num ASC, _partition_id ASC"
+            query += "ORDER BY _partition_id ASC, seq_num ASC"
         else:
             query += f"AND _partition_id={int(partition)} ORDER BY seq_num ASC"
 
