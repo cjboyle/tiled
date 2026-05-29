@@ -336,11 +336,10 @@ class SQLAdapter(Adapter[TableStructure]):
             f'FROM "{self.table_name}" '
             f"WHERE _dataset_id={self.dataset_id} "
         )
-        query += (
-            f"AND _partition_id={int(partition)}"
-            if partition is not None
-            else "ORDER BY _partition_id"
-        )
+        if partition is None:
+            query += "ORDER BY seq_num ASC, _partition_id ASC"
+        else:
+            query += f"AND _partition_id={int(partition)} ORDER BY seq_num ASC"
 
         with closing(self.storage.connect()) as conn:
             with conn.cursor() as cursor:
